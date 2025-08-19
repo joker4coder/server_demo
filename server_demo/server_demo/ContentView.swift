@@ -90,13 +90,13 @@ struct HomeView: View {
                     
                     Spacer()
                     
-                    Button(action: {
-                        // Button action
-                    }) {
-                        Image(systemName: "gearshape")
-                            .imageScale(.large)
-                            .foregroundColor(.gray)
-                    }
+//                    Button(action: {
+//                        // Button action
+//                    }) {
+//                        Image(systemName: "gearshape")
+//                            .imageScale(.large)
+//                            .foregroundColor(.gray)
+//                    }
                 }
                 .padding(.horizontal)
                 .padding(.top)
@@ -121,15 +121,16 @@ struct HomeView: View {
                                 } else {
                                     VStack(spacing: 8) {
                                         Image(systemName: "plus")
-                                            .font(.system(size: 40, weight: .bold))
+                                            .font(.system(size: 40, weight: .light))
                                             .foregroundColor(.white)
                                         Text("上传比赛视频")
+                                            .font(.system(size: 16, weight: .medium))
                                             .foregroundColor(.white)
                                     }
                                 }
                             }
-                            .frame(width: 150, height: 150)
-                            .background(Color.green)
+                            .frame(width: 180, height: 180)
+                            .background(Color(red: 0.2, green: 0.6, blue: 0.1, opacity: 1.0))
                             .clipShape(Circle())
                             .disabled(isProcessing) // Disable button when processing
                             
@@ -137,44 +138,51 @@ struct HomeView: View {
                                 Button(action: {
                                     // Photo library action
                                 }) {
-                                    VStack(spacing: 5) {
+                                    HStack(spacing: 5) {
                                         Image(systemName: "photo.fill.on.rectangle.fill")
                                             .imageScale(.large)
                                         Text("相册")
                                     }
+                                    .foregroundColor(.gray)
                                 }
                                 
                                 Button(action: {
                                     // Camera action
                                 }) {
-                                    VStack(spacing: 5) {
+                                    HStack(spacing: 5) {
                                         Image(systemName: "camera.fill")
                                             .imageScale(.large)
                                         Text("拍摄")
                                     }
+                                    .foregroundColor(.gray)
                                 }
                             }
                         }
                         .padding(.top, 40)
                         
+                        Divider().padding(.horizontal, 20)
+                        
                         // Status display text
-                        Text(statusMessage)
-                            .multilineTextAlignment(.center)
-                            .padding()
-                            .background(Color.gray.opacity(0.1))
-                            .cornerRadius(10)
+//                        Text(statusMessage)
+//                            .multilineTextAlignment(.center)
+//                            .padding()
+//                            .background(Color.gray.opacity(0.1))
+//                            .cornerRadius(10)
                         
                         // Recent analysis records list
                         VStack(alignment: .leading, spacing: 15) {
                             Text("最近分析记录")
-                                .font(.title2)
-                                .fontWeight(.bold)
-                                .padding(.leading)
+                                .font(.system(size: 18, weight: .bold))
+                                .padding(.leading, 16)
+                                .frame(maxWidth: .infinity, alignment: .leading)
                             
                             ForEach(viewModel.highlightRecords.prefix(2)) { record in
                                 AnalysisRecordRowView(record: record)
+                                    .frame(maxWidth: .infinity, alignment: .leading)  // 确保标题左对齐
+                                    .padding(.leading, 16)
                             }
                         }
+                        .frame(maxWidth: .infinity, alignment: .leading)  // 确保标题左对齐
                     }
                     .padding()
                 }
