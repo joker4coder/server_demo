@@ -14,7 +14,7 @@ struct server_demoApp: App {
 
     var body: some Scene {
         WindowGroup {
-            AppLaunchView()
+            CustomSplashScreenView()
                 .environmentObject(authViewModel)
         }
     }
