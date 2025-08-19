@@ -462,112 +462,41 @@ struct AnalysisView: View {
 
 // MARK: - My Profile View
 
-struct MyProfileView: View {
+import SwiftUI
+
+// 辅助视图：用于球员位置标签
+struct PlayerPositionLabel: View {
+    let title: String
+    
     var body: some View {
-        NavigationStack {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
-                    // Profile Header
-                    ZStack(alignment: .topLeading) {
-                        Image("profile-background") // Placeholder for background image
-                            .resizable()
-                            .aspectRatio(contentMode: .fill)
-                            .frame(height: 150)
-                            .clipped()
-                            .overlay(
-                                LinearGradient(gradient: Gradient(colors: [Color.black.opacity(0.4), Color.clear]), startPoint: .top, endPoint: .bottom)
-                            )
-                        
-                        VStack(alignment: .leading, spacing: 10) {
-                            HStack(alignment: .bottom) {
-                                Image(systemName: "person.circle.fill") // Placeholder for avatar
-                                    .resizable()
-                                    .frame(width: 80, height: 80)
-                                    .clipShape(Circle())
-                                    .overlay(Circle().stroke(Color.white, lineWidth: 4))
-                                    .padding(.leading, 20)
-                                
-                                Text("小帅") // User's name
-                                    .font(.title)
-                                    .fontWeight(.bold)
-                                    .foregroundColor(.white)
-                                
-                                Spacer()
-                            }
-                            
-                            HStack(spacing: 5) {
-                                Text("所属球队:")
-                                    .font(.subheadline)
-                                    .foregroundColor(.white)
-                                Text("深圳深夜鹰、深圳种子队")
-                                    .font(.subheadline)
-                                    .foregroundColor(.white)
-                            }
-                            .padding(.leading, 20)
-                        }
-                        .padding(.top, 20)
-                    }
-                    .frame(height: 150)
-                    
-                    // Stats Section
-                    VStack(spacing: 15) {
-                        HStack(spacing: 40) {
-                            StatView(number: "766", label: "进球")
-                            StatView(number: "68", label: "助攻")
-                            StatView(number: "569", label: "出场")
-                        }
-                        .padding(.horizontal, 20)
-                        
-                        HStack {
-                            Spacer()
-                            Text("展开")
-                            Image(systemName: "chevron.down")
-                        }
-                        .font(.caption)
-                        .foregroundColor(.gray)
-                        .padding(.trailing, 20)
-                    }
-                    .padding(.top, 20)
-                    
-                    // Menu List
-                    VStack(spacing: 1) {
-                        MenuListRow(icon: "photo.on.rectangle.angled", title: "个人集锦", subtitle: "已保存至我的视频片段", showChevron: true)
-                        MenuListRow(icon: "flag.fill", title: "我的比赛", subtitle: "仅显示我参加的比赛", showChevron: true)
-                        MenuListRow(icon: "person.fill", title: "球员信息", subtitle: "个人基本信息，公开展示", showChevron: true)
-                        MenuListRow(icon: "lock.shield.fill", title: "实名信息", subtitle: "参加赛事时需进行实名认证", showChevron: true)
-                        MenuListRow(icon: "square.grid.2x2.fill", title: "个人属性", subtitle: "初次加入球队时，此为默认属性", showChevron: true)
-                        MenuListRow(icon: "list.bullet.rectangle.fill", title: "订单", showChevron: true)
-                        MenuListRow(icon: "headphones", title: "客服", showChevron: true)
-                        MenuListRow(icon: "gearshape.fill", title: "设置", showChevron: true)
-                    }
-                    .padding(.top, 20)
-                }
-            }
-            .background(Color(.systemGray6))
-            .navigationTitle("我的")
-        }
+        Text(title)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.black.opacity(0.4))
+            .cornerRadius(4)
     }
 }
 
-// A reusable view for a statistic
+// 辅助视图：用于统计数据
 struct StatView: View {
     let number: String
     let label: String
     
     var body: some View {
-        VStack(spacing: 5) {
+        VStack(spacing: 4) {
             Text(number)
-                .font(.title2)
-                .fontWeight(.bold)
+                .font(.system(size: 24, weight: .bold))
                 .foregroundColor(.black)
             Text(label)
-                .font(.caption)
+                .font(.system(size: 14))
                 .foregroundColor(.gray)
         }
     }
 }
 
-// A reusable view for a menu list row
+// 辅助视图：用于菜单列表行
 struct MenuListRow: View {
     let icon: String
     let title: String
@@ -575,37 +504,135 @@ struct MenuListRow: View {
     var showChevron: Bool = false
     
     var body: some View {
-        HStack(spacing: 15) {
-            Image(systemName: icon)
-                .foregroundColor(.gray)
-                .imageScale(.large)
-                .frame(width: 25)
-            
-            VStack(alignment: .leading, spacing: 4) {
-                Text(title)
-                    .font(.body)
-                if let subtitle = subtitle {
-                    Text(subtitle)
-                        .font(.caption)
+        VStack(spacing: 0) {
+            HStack(spacing: 16) {
+                Image(systemName: icon)
+                    .font(.title2)
+                    .frame(width: 25)
+                    .foregroundColor(.gray)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 16))
+                    
+                    if let subtitle = subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 12))
+                            .foregroundColor(.gray)
+                    }
+                }
+                
+                Spacer()
+                
+                if showChevron {
+                    Image(systemName: "chevron.right")
                         .foregroundColor(.gray)
                 }
             }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
             
-            Spacer()
-            
-            if showChevron {
-                Image(systemName: "chevron.right")
-                    .foregroundColor(.gray)
-                    .imageScale(.small)
-            }
+            Divider()
+                .padding(.leading, 50)
         }
-        .padding(.vertical, 12)
-        .padding(.horizontal, 20)
-        .background(Color.white)
     }
 }
 
+struct MyProfileView: View {
+    var body: some View {
+        NavigationStack {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    // 1. 个人信息区域 - 包含背景图
+                    ZStack(alignment: .bottomLeading) {
+                        // 背景图只在此 ZStack 内部显示
+                        Image("my-bg")
+                            .resizable()
+                            .aspectRatio(contentMode: .fill)
+                            .frame(height: 200) // 背景图的高度
+                            .clipped()
+                        
+                        // 蒙版
+                        LinearGradient(
+                            gradient: Gradient(colors: [Color.black.opacity(0.1), Color.black.opacity(0.6)]),
+                            startPoint: .top,
+                            endPoint: .bottom
+                        )
+                        .frame(height: 200)
 
+                        // 个人信息内容
+                        VStack(alignment: .leading, spacing: 10) {
+                            HStack(alignment: .bottom, spacing: 16) {
+                                Image("player_avatar")
+                                    .resizable()
+                                    .aspectRatio(contentMode: .fill)
+                                    .frame(width: 80, height: 80)
+                                    .clipShape(Circle())
+                                    .overlay(Circle().stroke(Color.white, lineWidth: 2))
+                                
+                                VStack(alignment: .leading, spacing: 4) {
+                                    HStack(spacing: 8) {
+                                        Text("小帅")
+                                            .font(.system(size: 20, weight: .bold))
+                                            .foregroundColor(.white)
+                                        PlayerPositionLabel(title: "前腰")
+                                        PlayerPositionLabel(title: "右边")
+                                        PlayerPositionLabel(title: "右前卫")
+                                    }
+                                    
+                                    Text("所属球队: 深圳夜鹰.深圳种子队")
+                                        .font(.system(size: 14))
+                                        .foregroundColor(.white.opacity(0.8))
+                                }
+                            }
+                        }
+                        .padding(.horizontal)
+                        .padding(.bottom, 40) // 调整与卡片间距
+                    }
+                    .frame(maxWidth: .infinity, alignment: .top)
+                    .frame(height: 200) // ZStack 的整体高度
+                    
+                    // 2. 统计数据卡片
+                    VStack(spacing: 20) {
+                        HStack(spacing: 40) {
+                            StatView(number: "766", label: "进球")
+                            StatView(number: "68", label: "助攻")
+                            StatView(number: "569", label: "出场")
+                        }
+                        .padding(.horizontal, 20)
+                    }
+                    .padding(.vertical, 20)
+                    .frame(maxWidth: .infinity)
+                    .background(Color(.systemBackground))
+                    .cornerRadius(10)
+                    .shadow(color: Color.gray.opacity(0.1), radius: 5, x: 0, y: 5)
+                    .padding(.horizontal, 16)
+                    .offset(y: -40) // 向上移动，与背景图重叠
+                    
+                    // 3. 菜单列表
+                    VStack(spacing: 0) {
+                        MenuListRow(icon: "photo.on.rectangle.angled", title: "个人集锦", subtitle: "已保存至我的视频片段", showChevron: true)
+                        MenuListRow(icon: "flag.fill", title: "我的比赛", subtitle: "仅显示我参加的比赛", showChevron: true)
+                        MenuListRow(icon: "person.fill", title: "球员信息", subtitle: "个人基本信息，公开展示", showChevron: true)
+                        MenuListRow(icon: "lock.shield.fill", title: "实名信息", subtitle: "参加赛事时需进行实名认证", showChevron: true)
+                        MenuListRow(icon: "square.grid.2x2.fill", title: "个人属性", subtitle: "初次加入球队时，此为默认属性", showChevron: true)
+                        
+                        Divider().padding(.horizontal, 20)
+                        
+                        MenuListRow(icon: "list.bullet.rectangle.fill", title: "订单", showChevron: true)
+                        MenuListRow(icon: "headphones", title: "客服", showChevron: true)
+                        MenuListRow(icon: "gearshape.fill", title: "设置", showChevron: true)
+                    }
+                    .padding(.horizontal, 16)
+                    .offset(y: -40)
+                }
+            }
+            .background(Color(.systemGray6)) // 整个 ScrollView 的背景色
+            //.navigationTitle("我的")
+            .navigationBarTitleDisplayMode(.inline)
+        }
+    }
+}
 // MARK: - List Item View (Reusable)
 
 struct AnalysisRecordRowView: View {
