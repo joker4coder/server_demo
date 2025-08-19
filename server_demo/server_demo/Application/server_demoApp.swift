@@ -5,13 +5,18 @@
 //  Created by 金啸 on 2025/8/16.
 //
 
+
 import SwiftUI
 
 @main
 struct server_demoApp: App {
+    @StateObject private var authViewModel = AuthViewModel()
+
     var body: some Scene {
         WindowGroup {
-            ContentView()
+            AppLaunchView()
+                .environmentObject(authViewModel)
         }
     }
 }
+
