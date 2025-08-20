@@ -44,7 +44,7 @@ struct MyProfileView: View {
                                 
                                 VStack(alignment: .leading, spacing: 4) {
                                     HStack(spacing: 8) {
-                                        Text(authViewModel.userProfile?.username ?? "访客")
+                                        Text(authViewModel.currentUser?.username ?? "访客")
                                             .font(.system(size: 20, weight: .bold))
                                             .foregroundColor(.white)
                                         PlayerPositionLabel(title: "前腰")

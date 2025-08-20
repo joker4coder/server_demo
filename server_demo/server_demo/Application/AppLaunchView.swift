@@ -5,6 +5,8 @@
 //
 //  Created by Google on 2025/8/19.
 //
+//  MODIFIED: Updated to use the new AuthState enum and route to AuthenticationView.
+//
 
 import SwiftUI
 
@@ -14,18 +16,11 @@ struct AppLaunchView: View {
     var body: some View {
         Group {
             switch authViewModel.authState {
-            case .onboarding:
-                RegistrationView()
             case .signedOut:
-                LoginView()
+                AuthenticationView()
             case .signedIn:
                 ContentView()
             }
-        }
-        .onAppear {
-            // Re-check auth state every time the view appears, 
-            // for cases like session expiration.
-            authViewModel.checkAuthenticationState()
         }
     }
 }

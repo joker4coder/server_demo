@@ -1,80 +1,178 @@
-#
-#  server.py
-#  这是一个更新后的 Python Flask 服务器，用于接收视频、分析并返回集锦区间。
-#  请确保您已安装 Flask 和 moviepy: `pip install Flask moviepy`
-#
-
+import sqlite3
+import hashlib
 import os
-import random
-import tempfile
-from flask import Flask, jsonify, request
-#from moviepy.editor import VideoFileClip
-from moviepy import VideoFileClip
+from flask import Flask, request, jsonify
+import json
 
-
+# --- App & DB Configuration ---
 app = Flask(__name__)
+DATABASE = 'server_demo.db'
+UPLOAD_FOLDER = 'uploads'
+app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
+os.makedirs(UPLOAD_FOLDER, exist_ok=True)
 
-@app.route('/upload_video', methods=['POST'])
-def upload_video():
-    """
-    Handles video upload, processes the video to get frame count,
-    generates random highlight intervals, and returns them as JSON.
-    """
-    print("Received a request to upload video.")
+# --- Database Helper Functions ---
 
-    # Check if a video file is in the request
-    if 'video' not in request.files:
-        return jsonify({'error': 'No video file provided'}), 400
+def get_db():
+    """Opens a new database connection."""
+    conn = sqlite3.connect(DATABASE)
+    conn.row_factory = sqlite3.Row
+    return conn
 
-    video_file = request.files['video']
+def init_db():
+    """Initializes the database and creates tables if they don't exist."""
+    with app.app_context():
+        db = get_db()
+        cursor = db.cursor()
+        # Create users table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT UNIQUE NOT NULL,
+                password_hash TEXT NOT NULL
+            )
+        ''')
+        # Create video_analyses table
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS video_analyses (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL,
+                video_name TEXT NOT NULL,
+                analysis_result TEXT NOT NULL,
+                timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (id)
+            )
+        ''')
+        db.commit()
+        cursor.close()
+        db.close()
+        print("Database initialized.")
 
-    # Save the video to a temporary file
-    temp_dir = tempfile.gettempdir()
-    temp_path = os.path.join(temp_dir, video_file.filename or 'temp_video.mp4')
-    video_file.save(temp_path)
-    print(f"Video saved to temporary path: {temp_path}")
+def hash_password(password):
+    """Hashes a password using SHA256."""
+    return hashlib.sha256(password.encode('utf-8')).hexdigest()
 
-    try:
-        # Load video clip and get its duration in seconds
-        clip = VideoFileClip(temp_path)
-        duration_in_seconds = clip.duration
+# --- API Endpoints ---
 
-        # Assume a standard frame rate of 30 fps to calculate total frames.
-        # This is a simplification; a more robust solution would read the video's actual fps.
-        fps = 30
-        total_frames = int(duration_in_seconds * fps)
-        print(f"Video duration: {duration_in_seconds:.2f}s, Total frames: {total_frames}")
+@app.route('/api/register', methods=['POST'])
+def register():
+    """Registers a new user."""
+    data = request.get_json()
+    if not data or 'username' not in data or 'password' not in data:
+        return jsonify({'status': 'error', 'message': 'Missing username or password'}), 400
 
-        if total_frames < 300: # Ensure video is long enough for 3 highlights
-            return jsonify({'error': 'Video is too short to generate highlights.'}), 400
+    username = data['username']
+    password = data['password']
+    
+    db = get_db()
+    cursor = db.cursor()
+    
+    # Check if user already exists
+    cursor.execute('SELECT id FROM users WHERE username = ?', (username,))
+    if cursor.fetchone():
+        cursor.close()
+        db.close()
+        return jsonify({'status': 'error', 'message': 'Username already exists'}), 409
 
-        highlights = []
-        for _ in range(3):
-            # Generate random start and end frames for 30-60 frames intervals
-            # Ensures start frame is not too close to the end
-            start_frame = random.randint(1, total_frames - 60)
-            end_frame = start_frame + random.randint(30, 60)
+    # Insert new user
+    password_h = hash_password(password)
+    cursor.execute('INSERT INTO users (username, password_hash) VALUES (?, ?)', (username, password_h))
+    db.commit()
+    
+    user_id = cursor.lastrowid
+    cursor.close()
+    db.close()
+    
+    return jsonify({'status': 'success', 'message': 'User registered successfully', 'user_id': user_id}), 201
 
-            # Clamp the end frame to the total frames
-            if end_frame > total_frames:
-                end_frame = total_frames
+@app.route('/api/login', methods=['POST'])
+def login():
+    """Logs in a user."""
+    data = request.get_json()
+    if not data or 'username' not in data or 'password' not in data:
+        return jsonify({'status': 'error', 'message': 'Missing username or password'}), 400
 
-            highlights.append({'startFrame': start_frame, 'endFrame': end_frame})
+    username = data['username']
+    password = data['password']
+    password_h = hash_password(password)
 
-        response = {'highlights': highlights}
-        return jsonify(response)
+    db = get_db()
+    cursor = db.cursor()
+    
+    cursor.execute('SELECT * FROM users WHERE username = ?', (username,))
+    user = cursor.fetchone()
+    
+    if user and user['password_hash'] == password_h:
+        cursor.close()
+        db.close()
+        return jsonify({
+            'status': 'success', 
+            'message': 'Login successful', 
+            'user_id': user['id'],
+            'username': user['username']
+        }), 200
+    else:
+        cursor.close()
+        db.close()
+        return jsonify({'status': 'error', 'message': 'Invalid username or password'}), 401
 
-    except Exception as e:
-        print(f"An error occurred: {e}")
-        return jsonify({'error': 'Failed to process video.'}), 500
+@app.route('/api/upload', methods=['POST'])
+def upload_file():
+    """Uploads a video for analysis and associates it with a user."""
+    # Check if user_id is provided
+    if 'user_id' not in request.form:
+        return jsonify({'status': 'error', 'message': 'user_id is required'}), 400
+    user_id = request.form['user_id']
 
-    finally:
-        # Clean up the temporary file
-        if os.path.exists(temp_path):
-            os.remove(temp_path)
-            print("Temporary video file removed.")
+    # Check if the post request has the file part
+    if 'file' not in request.files:
+        return jsonify({'status': 'error', 'message': 'No file part in the request'}), 400
+    file = request.files['file']
 
+    if file.filename == '':
+        return jsonify({'status': 'error', 'message': 'No file selected for uploading'}), 400
+
+    if file:
+        filename = file.filename
+        save_path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+        file.save(save_path)
+
+        # --- Simulate Analysis ---
+        # In a real application, you would call your analysis logic here.
+        # For this demo, we'll just create a dummy result.
+        analysis_result = {
+            "file_path": save_path,
+            "summary": f"Analysis of {filename} complete.",
+            "score": 95.5,
+            "highlights": [
+                {"timestamp": "00:15", "event": "Goal"},
+                {"timestamp": "00:48", "event": "Foul"}
+            ]
+        }
+        analysis_result_str = json.dumps(analysis_result)
+        
+        # --- Store analysis result in the database ---
+        db = get_db()
+        cursor = db.cursor()
+        cursor.execute(
+            'INSERT INTO video_analyses (user_id, video_name, analysis_result) VALUES (?, ?, ?)',
+            (user_id, filename, analysis_result_str)
+        )
+        db.commit()
+        cursor.close()
+        db.close()
+
+        return jsonify({
+            'status': 'success',
+            'message': f"File '{filename}' uploaded and analyzed successfully.",
+            'data': analysis_result
+        }), 200
+
+    return jsonify({'status': 'error', 'message': 'An unexpected error occurred'}), 500
+
+# --- Main Execution ---
 if __name__ == '__main__':
-    # 0.0.0.0 allows the server to be accessible from other devices on the same network
-    app.run(host='0.0.0.0', port=5001, debug=True)
-
+    init_db()  # Initialize the database on startup
+    # To run this, use: flask --app server_upload run
+    # Or for development:
+    app.run(host='0.0.0.0', port=8000, debug=True)

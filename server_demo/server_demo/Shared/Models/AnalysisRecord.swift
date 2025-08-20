@@ -17,11 +17,14 @@ struct AnalysisRecord: Identifiable, Codable {
     let status: AnalysisStatus
     let thumbnail: String? // Local identifier
     let duration: Double
+    let videoURL: String // Added
+    let analysisSummary: String // Added
+    let analysisDate: Date // Added
     let localIdentifier: String? // Optional local identifier
     
     // CodingKeys required for Codable protocol
     enum CodingKeys: String, CodingKey {
-        case id, title, date, location, status, thumbnail, duration, localIdentifier
+        case id, title, date, location, status, thumbnail, duration, videoURL, analysisSummary, analysisDate, localIdentifier
     }
 }
 

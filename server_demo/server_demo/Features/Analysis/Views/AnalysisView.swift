@@ -1,4 +1,5 @@
 
+
 //
 //  AnalysisView.swift
 //  server_demo
@@ -29,3 +30,4 @@ struct AnalysisView: View {
         }
     }
 }
+

@@ -11,6 +11,7 @@ import AVFoundation
 import CoreGraphics
 
 struct HomeView: View {
+    @EnvironmentObject var authViewModel: AuthViewModel
     // Observe the model object for UI updates
     @StateObject private var viewModel = HighlightsViewModel()
     
@@ -19,8 +20,9 @@ struct HomeView: View {
     @State private var statusMessage = "点击按钮选择视频..."
     @State private var isProcessing = false
     
-    // Replace with your local IP address and port
-    private let serverURL = URL(string: "http://192.168.3.38:5001/upload_video")!
+    // Replace with your local IP address and port 10.93.5.1
+    //private let serverURL = URL(string: "http://127.0.0.1:8000/api/upload")!
+    private let serverURL = URL(string: "http://10.93.5.1:8000/api/upload")!
 
     var body: some View {
         NavigationStack {
@@ -41,6 +43,12 @@ struct HomeView: View {
                         // Upload video area
                         VStack(spacing: 20) {
                             Button(action: {
+                                // Check if user is logged in
+                                guard authViewModel.currentUser != nil else {
+                                    statusMessage = "请先登录才能上传视频。"
+                                    return
+                                }
+                                
                                 PHPhotoLibrary.requestAuthorization(for: .readWrite) { status in
                                     if status == .authorized {
                                         isPickerPresented = true
@@ -125,41 +133,43 @@ struct HomeView: View {
     
     // Process the selected video URL
     private func processVideo(url: URL) {
+        guard let userId = authViewModel.currentUser?.userId else {
+            statusMessage = "请先登录才能上传视频。"
+            return
+        }
+        
         isProcessing = true
         statusMessage = "正在上传视频到服务器..."
         
         Task {
             do {
-                let highlights = try await uploadVideo(videoURL: url)
+                // Pass userId to the upload function
+                let analysisResultDict = try await uploadVideo(videoURL: url, userId: userId)
                 
                 statusMessage = "正在根据服务器返回的区间生成集锦视频..."
                 
-                let asset = AVURLAsset(url: url)
-                guard let videoTrack = try await asset.loadTracks(withMediaType: .video).first else {
-                    throw NSError(domain: "VideoError", code: 1, userInfo: [NSLocalizedDescriptionKey: "未找到视频轨道。"])
-                }
-                let frameRate = try await videoTrack.load(.nominalFrameRate)
-                
-                var totalHighlightDuration: Double = 0
-                for highlight in highlights {
-                    totalHighlightDuration += Double(highlight.endFrame - highlight.startFrame) / Double(frameRate)
+                // Extract summary from the analysisResultDict
+                guard let summary = analysisResultDict["summary"] as? String else {
+                    throw NSError(domain: "AnalysisError", code: 2, userInfo: [NSLocalizedDescriptionKey: "服务器返回的分析结果格式不正确。"])
                 }
                 
-                let localIdentifier = try await generateHighlightVideo(originalVideoURL: url, highlights: highlights)
-
+                // Create a new AnalysisRecord with ALL required parameters
                 let updatedRecord = AnalysisRecord(
-                    title: "新视频集锦",
+                    title: "视频分析结果",
                     date: Date().formatted(date: .abbreviated, time: .omitted),
-                    location: "我的相册",
+                    location: "服务器分析",
                     status: .completed,
-                    thumbnail: localIdentifier,
-                    duration: totalHighlightDuration,
-                    localIdentifier: localIdentifier
+                    thumbnail: nil,
+                    duration: 0.0,
+                    videoURL: url.absoluteString, // 必需的参数
+                    analysisSummary: summary,     // 必需的参数
+                    analysisDate: Date(),         // 必需的参数
+                    localIdentifier: nil          // 必需的参数
                 )
                 
                 await MainActor.run {
                     viewModel.addHighlight(updatedRecord)
-                    statusMessage = "视频集锦已成功保存到相册！"
+                    statusMessage = "视频已成功上传并分析！"
                 }
                 
             } catch {
@@ -173,9 +183,9 @@ struct HomeView: View {
             }
         }
     }
-    
     // Upload video to the server and get the response
-    private func uploadVideo(videoURL: URL) async throws -> [HighlightInterval] {
+    // Returns the 'data' dictionary from the server response
+    private func uploadVideo(videoURL: URL, userId: Int) async throws -> [String: Any] {
         var request = URLRequest(url: serverURL)
         request.httpMethod = "POST"
         
@@ -184,30 +194,51 @@ struct HomeView: View {
         
         var httpBody = Data()
         
+        // Add user_id field
         httpBody.append("--\(boundary)\r\n".data(using: .utf8)!)
-        httpBody.append("Content-Disposition: form-data; name=\"video\"; filename=\"\(videoURL.lastPathComponent)\"\r\n".data(using: .utf8)!)
+        httpBody.append("Content-Disposition: form-data; name=\"user_id\"\r\n".data(using: .utf8)!)
+        httpBody.append("\r\n".data(using: .utf8)!)
+        httpBody.append("\(userId)\r\n".data(using: .utf8)!)
+        
+        // Add video file
+        httpBody.append("--\(boundary)\r\n".data(using: .utf8)!)
+        httpBody.append("Content-Disposition: form-data; name=\"file\"; filename=\"\(videoURL.lastPathComponent)\"\r\n".data(using: .utf8)!)
         httpBody.append("Content-Type: video/mp4\r\n\r\n".data(using: .utf8)!)
         httpBody.append(try Data(contentsOf: videoURL))
         httpBody.append("\r\n".data(using: .utf8)!)
         
         httpBody.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = httpBody
         
-        let (data, response) = try await URLSession.shared.upload(for: request, from: httpBody)
+        let (data, response) = try await URLSession.shared.data(for: request)
         
         guard let httpResponse = response as? HTTPURLResponse else {
             throw URLError(.badServerResponse)
         }
         
-        if httpResponse.statusCode != 200 {
-            let errorResponse = try? JSONDecoder().decode(ServerErrorResponse.self, from: data)
-            let errorMessage = errorResponse?.error ?? "未知的服务器错误"
-            throw NSError(domain: "ServerError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+        // Decode the full JSON response
+        guard let jsonResponse = try? JSONSerialization.jsonObject(with: data, options: []) as? [String: Any] else {
+            throw NSError(domain: "ServerError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: "服务器返回了无效的JSON。"])
         }
         
-        let decodedResponse = try JSONDecoder().decode(HighlightsResponse.self, from: data)
-        return decodedResponse.highlights
+        if (200...299).contains(httpResponse.statusCode) {
+            // Check for 'status' and 'data' in the response
+            if let status = jsonResponse["status"] as? String, status == "success",
+               let responseData = jsonResponse["data"] as? [String: Any] {
+                return responseData // Return the 'data' dictionary
+            } else {
+                let errorMessage = jsonResponse["message"] as? String ?? "未知成功响应格式。"
+                throw NSError(domain: "ServerError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+            }
+        } else {
+            let errorMessage = jsonResponse["message"] as? String ?? "未知的服务器错误"
+            throw NSError(domain: "ServerError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorMessage])
+        }
     }
-
+    
+    // The following functions (generateHighlightVideo, saveVideoToPhotoLibrary)
+    // are for local video processing and saving. They are kept but not directly
+    // used in the current server-driven analysis flow.
     private func generateHighlightVideo(originalVideoURL: URL, highlights: [HighlightInterval]) async throws -> String {
         let asset = AVURLAsset(url: originalVideoURL)
         let tracks = try await asset.load(.tracks)
