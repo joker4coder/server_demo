@@ -14,11 +14,42 @@ import AVFoundation
 import CoreGraphics
 import AVKit
 import UniformTypeIdentifiers
+import Security
+
+// MARK: - New Data Models for Server Communication
+struct ServerErrorResponse: Codable {
+    let error: String
+}
+
+struct HighlightsResponse: Codable {
+    let highlights: [HighlightInterval]
+}
+
+struct HighlightInterval: Codable {
+    let startFrame: Int
+    let endFrame: Int
+}
+
+struct LoginResponse: Codable {
+    let userId: String
+    let message: String
+}
+
+struct ServerHighlightsResponse: Codable {
+    let records: [ServerRecord]
+}
+
+struct ServerRecord: Codable {
+    let title: String
+    let date: String
+    let location: String
+    let duration: Double
+}
 
 // MARK: - Data Models
 
 // AnalysisRecord is now Codable for storage and retrieval
-struct AnalysisRecord: Identifiable, Codable {
+struct AnalysisRecord: Identifiable, Codable, Equatable {
     let id = UUID()
     let title: String
     let date: String
@@ -43,26 +74,244 @@ enum AnalysisStatus: String, Codable {
 // MARK: - Main Views
 
 struct ContentView: View {
+    // 使用一个枚举来管理认证状态
+    enum AuthState {
+        case loggedOut
+        case registering
+        case loggedIn
+    }
+    
+    @State private var authState: AuthState = .loggedOut
+    @State private var userId: String?
+    
     var body: some View {
-        TabView {
-            // First Tab: Home
-            HomeView()
-                .tabItem {
-                    Label("首页", systemImage: "house")
+        Group {
+            switch authState {
+            case .loggedOut:
+                LoginView(authState: $authState, userId: $userId)
+            case .registering:
+                RegisterView(authState: $authState)
+            case .loggedIn:
+                TabView {
+                    // First Tab: Home
+                    HomeView(userId: userId)
+                        .tabItem {
+                            Label("首页", systemImage: "house")
+                        }
+                    
+                    // Second Tab: Analysis
+                    AnalysisView()
+                        .tabItem {
+                            Label("分析", systemImage: "bolt.fill")
+                        }
+                    
+                    // Third Tab: My Profile
+                    MyProfileView(authState: $authState, userId: $userId)
+                        .tabItem {
+                            Label("我的", systemImage: "person.fill")
+                        }
                 }
-            
-            // Second Tab: Analysis
-            AnalysisView()
-                .tabItem {
-                    Label("分析", systemImage: "bolt.fill")
-                }
-            
-            // Third Tab: My Profile
-            MyProfileView()
-                .tabItem {
-                    Label("我的", systemImage: "person.fill")
-                }
+            }
         }
+        .onAppear {
+            // 检查本地是否有已保存的userId
+            if let savedUserId = UserDefaults.standard.string(forKey: "currentUserId") {
+                userId = savedUserId
+                authState = .loggedIn
+            }
+        }
+    }
+}
+
+// MARK: - Login View
+
+struct LoginView: View {
+    @Binding var authState: ContentView.AuthState
+    @Binding var userId: String?
+    
+    @State private var username = ""
+    @State private var password = ""
+    @State private var message = ""
+    @State private var isLoading = false
+    
+    private let serverURL = URL(string: "http://192.168.3.38:5001/login")
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("登录")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+            
+            TextField("用户名", text: $username)
+                .textFieldStyle(.roundedBorder)
+            
+            SecureField("密码", text: $password)
+                .textFieldStyle(.roundedBorder)
+            
+            if isLoading {
+                ProgressView()
+            } else {
+                Button("登录") {
+                    login()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            
+            Text(message)
+                .foregroundColor(.red)
+            
+            Button("还没有账号？去注册") {
+                authState = .registering
+            }
+            .buttonStyle(.plain)
+        }
+        .padding()
+    }
+    
+    private func login() {
+        isLoading = true
+        message = ""
+        
+        guard let url = serverURL else {
+            message = "服务器地址无效"
+            isLoading = false
+            return
+        }
+        
+        let requestBody = ["username": username, "password": password]
+        guard let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
+            message = "数据格式错误"
+            isLoading = false
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = httpBody
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                isLoading = false
+                if let error = error {
+                    message = "登录失败: \(error.localizedDescription)"
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    message = "服务器响应无效"
+                    return
+                }
+                
+                guard httpResponse.statusCode == 200, let data = data else {
+                    let errorResponse = try? JSONDecoder().decode(ServerErrorResponse.self, from: data ?? Data())
+                    message = errorResponse?.error ?? "未知的登录错误"
+                    return
+                }
+                
+                // 登录成功，解析userId并切换视图
+                if let decodedResponse = try? JSONDecoder().decode(LoginResponse.self, from: data) {
+                    self.userId = decodedResponse.userId
+                    UserDefaults.standard.set(decodedResponse.userId, forKey: "currentUserId")
+                    authState = .loggedIn
+                    message = "登录成功"
+                } else {
+                    message = "解析服务器响应失败"
+                }
+            }
+        }.resume()
+    }
+}
+
+// MARK: - Register View
+
+struct RegisterView: View {
+    @Binding var authState: ContentView.AuthState
+    
+    @State private var username = ""
+    @State private var password = ""
+    @State private var message = ""
+    @State private var isLoading = false
+    
+    private let serverURL = URL(string: "http://192.168.3.38:5001/register")
+    
+    var body: some View {
+        VStack(spacing: 20) {
+            Text("注册")
+                .font(.largeTitle)
+                .fontWeight(.bold)
+            
+            TextField("用户名", text: $username)
+                .textFieldStyle(.roundedBorder)
+            
+            SecureField("密码", text: $password)
+                .textFieldStyle(.roundedBorder)
+            
+            if isLoading {
+                ProgressView()
+            } else {
+                Button("注册") {
+                    register()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+            
+            Text(message)
+                .foregroundColor(.red)
+            
+            Button("已有账号？去登录") {
+                authState = .loggedOut
+            }
+            .buttonStyle(.plain)
+        }
+        .padding()
+    }
+    
+    private func register() {
+        isLoading = true
+        message = ""
+        
+        guard let url = serverURL else {
+            message = "服务器地址无效"
+            isLoading = false
+            return
+        }
+        
+        let requestBody = ["username": username, "password": password]
+        guard let httpBody = try? JSONSerialization.data(withJSONObject: requestBody) else {
+            message = "数据格式错误"
+            isLoading = false
+            return
+        }
+        
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = httpBody
+        
+        URLSession.shared.dataTask(with: request) { data, response, error in
+            DispatchQueue.main.async {
+                isLoading = false
+                if let error = error {
+                    message = "注册失败: \(error.localizedDescription)"
+                    return
+                }
+                
+                guard let httpResponse = response as? HTTPURLResponse else {
+                    message = "服务器响应无效"
+                    return
+                }
+                
+                guard httpResponse.statusCode == 201 else {
+                    let errorResponse = try? JSONDecoder().decode(ServerErrorResponse.self, from: data ?? Data())
+                    message = errorResponse?.error ?? "未知的注册错误"
+                    return
+                }
+                
+                message = "注册成功，请登录"
+                authState = .loggedOut
+            }
+        }.resume()
     }
 }
 
@@ -71,15 +320,13 @@ struct ContentView: View {
 struct HomeView: View {
     // Observe the model object for UI updates
     @StateObject private var viewModel = HighlightsViewModel()
-    
-    // State management
     @State private var isPickerPresented = false
     @State private var statusMessage = "点击按钮选择视频..."
     @State private var isProcessing = false
     
-    // Replace with your local IP address and port
-    private let serverURL = URL(string: "http://192.168.3.38:5001/upload_video")!
-
+    let userId: String?
+    private let serverURL = URL(string: "http://192.168.3.38:5001/upload_video")
+    
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
@@ -91,13 +338,13 @@ struct HomeView: View {
                     
                     Spacer()
                     
-//                    Button(action: {
-//                        // Button action
-//                    }) {
-//                        Image(systemName: "gearshape")
-//                            .imageScale(.large)
-//                            .foregroundColor(.gray)
-//                    }
+                    //                    Button(action: {
+                    //                        // Button action
+                    //                    }) {
+                    //                        Image(systemName: "gearshape")
+                    //                            .imageScale(.large)
+                    //                            .foregroundColor(.gray)
+                    //                    }
                 }
                 .padding(.horizontal)
                 .padding(.top)
@@ -141,7 +388,6 @@ struct HomeView: View {
                                 }) {
                                     HStack(spacing: 5) {
                                         Image(systemName: "photo.fill.on.rectangle.fill")
-                                            .imageScale(.large)
                                         Text("相册")
                                     }
                                     .foregroundColor(.gray)
@@ -162,13 +408,6 @@ struct HomeView: View {
                         .padding(.top, 40)
                         
                         Divider().padding(.horizontal, 20)
-                        
-                        // Status display text
-//                        Text(statusMessage)
-//                            .multilineTextAlignment(.center)
-//                            .padding()
-//                            .background(Color.gray.opacity(0.1))
-//                            .cornerRadius(10)
                         
                         // Recent analysis records list
                         VStack(alignment: .leading, spacing: 15) {
@@ -192,7 +431,7 @@ struct HomeView: View {
                 VideoPicker(onVideoPicked: processVideo)
             }
             .onAppear {
-                viewModel.fetchHighlights() // Load records when the view appears
+                viewModel.loadHighlights()
             }
         }
     }
@@ -204,12 +443,15 @@ struct HomeView: View {
         isProcessing = true
         statusMessage = "正在上传视频到服务器..."
         
-        // Simulate an analysis record with "processing" status
-        let newRecord = AnalysisRecord(title: "新视频分析", date: "今天", location: "未知", status: .processing, thumbnail: nil, duration: 0, localFileUrl: nil)
-        
         Task {
             do {
-                let highlights = try await uploadVideo(videoURL: url)
+                guard let highlights = try await uploadVideo(videoURL: url) else {
+                    await MainActor.run {
+                        statusMessage = "服务器未返回集锦数据"
+                        isProcessing = false
+                    }
+                    return
+                }
                 
                 print("服务器返回的集锦区间:")
                 for (index, highlight) in highlights.enumerated() {
@@ -218,7 +460,6 @@ struct HomeView: View {
                 
                 statusMessage = "正在根据服务器返回的区间生成集锦视频..."
                 
-                // Get the original video's asset
                 let asset = AVURLAsset(url: url)
                 let videoTrack = try await asset.load(.tracks).first(where: { $0.mediaType == .video })
                 guard let videoTrack else {
@@ -226,23 +467,20 @@ struct HomeView: View {
                 }
                 let frameRate = try await videoTrack.load(.nominalFrameRate)
                 
-                // Calculate the total duration of the highlights
                 var totalHighlightDuration: Double = 0
                 for highlight in highlights {
                     totalHighlightDuration += Double(highlight.endFrame - highlight.startFrame) / Double(frameRate)
                 }
                 
-                // Save the video to the photo album
                 let localFileUrl = try await generateHighlightVideo(originalVideoURL: url, highlights: highlights)
-
-                // Update the record status with the correct duration
+                
                 let updatedRecord = AnalysisRecord(
-                    title: "新视频集锦", // You can customize the title
+                    title: "新视频集锦",
                     date: Date().formatted(date: .abbreviated, time: .omitted),
                     location: "我的相册",
                     status: .completed,
                     thumbnail: localFileUrl.absoluteString,
-                    duration: totalHighlightDuration, // Use the new duration
+                    duration: totalHighlightDuration,
                     localFileUrl: localFileUrl
                 )
                 
@@ -264,8 +502,16 @@ struct HomeView: View {
     }
     
     // Upload video to the server and get the response
-    private func uploadVideo(videoURL: URL) async throws -> [HighlightInterval] {
-        var request = URLRequest(url: serverURL)
+    private func uploadVideo(videoURL: URL) async throws -> [HighlightInterval]? {
+        guard let userId = userId else {
+            throw NSError(domain: "AuthError", code: 100, userInfo: [NSLocalizedDescriptionKey: "用户未登录"])
+        }
+        
+        guard let url = serverURL else {
+            throw NSError(domain: "URL Error", code: 101, userInfo: [NSLocalizedDescriptionKey: "服务器地址无效"])
+        }
+        
+        var request = URLRequest(url: url)
         request.httpMethod = "POST"
         
         let boundary = UUID().uuidString
@@ -273,6 +519,13 @@ struct HomeView: View {
         
         var httpBody = Data()
         
+        // Add userId to the form data
+        httpBody.append("--\(boundary)\r\n".data(using: .utf8)!)
+        httpBody.append("Content-Disposition: form-data; name=\"userId\"\r\n\r\n".data(using: .utf8)!)
+        httpBody.append(userId.data(using: .utf8)!)
+        httpBody.append("\r\n".data(using: .utf8)!)
+        
+        // Add video file
         httpBody.append("--\(boundary)\r\n".data(using: .utf8)!)
         httpBody.append("Content-Disposition: form-data; name=\"video\"; filename=\"\(videoURL.lastPathComponent)\"\r\n".data(using: .utf8)!)
         httpBody.append("Content-Type: video/mp4\r\n\r\n".data(using: .utf8)!)
@@ -293,9 +546,10 @@ struct HomeView: View {
             throw NSError(domain: "ServerError", code: httpResponse.statusCode, userInfo: [NSLocalizedDescriptionKey: errorMessage])
         }
         
-        let decodedResponse = try JSONDecoder().decode(HighlightsResponse.self, from: data)
-        return decodedResponse.highlights
+        let decodedResponse = try? JSONDecoder().decode(HighlightsResponse.self, from: data)
+        return decodedResponse?.highlights
     }
+    
     // gen by ds
     // Generate a highlight video with a watermark based on intervals and save to the app's document directory
     private func generateHighlightVideo(originalVideoURL: URL, highlights: [HighlightInterval]) async throws -> URL {
@@ -405,8 +659,9 @@ struct HomeView: View {
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
         videoComposition.instructions = layerInstructions
         
-        // Save the video to the app's document directory
-        let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+        // --- 修复点：将文件保存到文档目录，而不是临时目录 ---
+        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+        let outputURL = documentsDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
         
         guard let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
             throw NSError(domain: "VideoExportError", code: 2, userInfo: [NSLocalizedDescriptionKey: "无法创建导出会话。"])
@@ -444,7 +699,7 @@ struct AnalysisView: View {
             }
             .navigationTitle("分析")
             .onAppear {
-                viewModel.fetchHighlights() // Load records when the view appears
+                viewModel.loadHighlights()
             }
         }
     }
@@ -453,6 +708,9 @@ struct AnalysisView: View {
 // MARK: - My Profile View
 
 struct MyProfileView: View {
+    @Binding var authState: ContentView.AuthState
+    @Binding var userId: String?
+    
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -473,7 +731,7 @@ struct MyProfileView: View {
                             endPoint: .bottom
                         )
                         .frame(height: 200)
-
+                        
                         // 个人信息内容
                         VStack(alignment: .leading, spacing: 10) {
                             HStack(alignment: .bottom, spacing: 16) {
@@ -539,6 +797,17 @@ struct MyProfileView: View {
                     }
                     .padding(.horizontal, 16)
                     .offset(y: -40)
+                    
+                    Button("退出登录") {
+                        UserDefaults.standard.removeObject(forKey: "currentUserId")
+                        userId = nil
+                        authState = .loggedOut
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .tint(.red)
+                    .padding()
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    
                 }
             }
             .background(Color(.systemGray6)) // 整个 ScrollView 的背景色
@@ -547,6 +816,7 @@ struct MyProfileView: View {
         }
     }
 }
+
 // MARK: - List Item View (Reusable)
 
 struct AnalysisRecordRowView: View {
@@ -557,6 +827,7 @@ struct AnalysisRecordRowView: View {
     var body: some View {
         // If the record is completed and has a local identifier, make it navigable
         Group {
+            // Only allow navigation if a local file URL exists
             if let localUrl = record.localFileUrl, record.status == .completed {
                 NavigationLink(destination: VideoPlayerContainerView(localFileUrl: localUrl)) {
                     contentView
@@ -649,7 +920,7 @@ struct AnalysisRecordRowView: View {
         .cornerRadius(10)
         .shadow(color: .gray.opacity(0.2), radius: 5, x: 0, y: 2)
     }
-
+    
     private func generateThumbnail(for videoURL: URL) {
         let asset = AVAsset(url: videoURL)
         let generator = AVAssetImageGenerator(asset: asset)
@@ -663,6 +934,7 @@ struct AnalysisRecordRowView: View {
                 }
             } catch {
                 print("Error generating thumbnail: \(error.localizedDescription)")
+                self.thumbnailImage = UIImage(systemName: "exclamationmark.triangle.fill")
             }
         }
     }
@@ -789,63 +1061,88 @@ class HighlightsViewModel: ObservableObject {
     
     private let recordsKey = "highlightAnalysisRecords"
     
-    // Load data from UserDefaults
-    func fetchHighlights() {
-        if let savedRecordsData = UserDefaults.standard.data(forKey: recordsKey) {
-            let decoder = JSONDecoder()
-            if let savedRecords = try? decoder.decode([AnalysisRecord].self, from: savedRecordsData) {
-                DispatchQueue.main.async {
-                    self.highlightRecords = savedRecords
-                }
+    // MARK: - 本地数据持久化
+    
+    func saveHighlights() {
+        do {
+            let encodedData = try JSONEncoder().encode(highlightRecords)
+            UserDefaults.standard.set(encodedData, forKey: recordsKey)
+            print("集锦记录已保存到 UserDefaults。")
+        } catch {
+            print("保存集锦记录失败: \(error.localizedDescription)")
+        }
+    }
+    
+    func loadHighlights() {
+        if let savedData = UserDefaults.standard.data(forKey: recordsKey) {
+            do {
+                highlightRecords = try JSONDecoder().decode([AnalysisRecord].self, from: savedData)
+                print("集锦记录已从 UserDefaults 加载。")
+            } catch {
+                print("加载集锦记录失败: \(error.localizedDescription)")
             }
         }
+    }
+    
+    // Load data from server based on userId
+    func fetchHighlights(userId: String?) {
+        // This function is now for fetching server-side data, but the core issue
+        // is with local persistence. We'll leave this here for future server
+        // functionality, but the main fix is in loadHighlights().
+        
+        guard let userId = userId else {
+            print("用户未登录，无法获取集锦记录。")
+            // Instead of clearing, let's keep the local records
+            return
+        }
+        
+        guard let url = URL(string: "http://192.168.3.38:5001/get_highlights?userId=\(userId)") else { return }
+        
+        URLSession.shared.dataTask(with: url) { data, response, error in
+            if let data = data {
+                if let decodedResponse = try? JSONDecoder().decode(ServerHighlightsResponse.self, from: data) {
+                    DispatchQueue.main.async {
+                        // 将服务器返回的数据转换为本地模型
+                        let serverRecords = decodedResponse.records.map { serverRecord -> AnalysisRecord in
+                            // For simplicity, we create a dummy AnalysisRecord.
+                            // In a real app, you would fetch these details from the server as well.
+                            return AnalysisRecord(
+                                title: serverRecord.title,
+                                date: serverRecord.date,
+                                location: serverRecord.location,
+                                status: .completed, // Assuming all fetched are completed
+                                thumbnail: nil, // We'll need to handle thumbnail from server later
+                                duration: serverRecord.duration,
+                                localFileUrl: nil // You would need a separate endpoint to download the video
+                            )
+                        }
+                        // This would need a more complex merge logic in a real app
+                        // For now, we'll just add new ones if they don't exist
+                        let newRecords = serverRecords.filter { !self.highlightRecords.contains($0) }
+                        self.highlightRecords.append(contentsOf: newRecords)
+                        
+                        // We also need to save the combined data
+                        self.saveHighlights()
+                    }
+                    return
+                }
+            }
+            print("Failed to fetch highlights: \(error?.localizedDescription ?? "未知错误")")
+        }.resume()
     }
     
     // Add a new record and save
     func addHighlight(_ record: AnalysisRecord) {
-        // Insert new record at the beginning of the list
         highlightRecords.insert(record, at: 0)
+        // Immediately save to local storage after adding a new record
         saveHighlights()
     }
     
-    // Save data to UserDefaults
-    private func saveHighlights() {
-        let encoder = JSONEncoder()
-        if let encoded = try? encoder.encode(highlightRecords) {
-            UserDefaults.standard.set(encoded, forKey: recordsKey)
-        }
-    }
-    
     func deleteAssets(at offsets: IndexSet) {
-        let recordsToDelete = offsets.map { highlightRecords[$0] }
-        
-        // Delete local files
-        for record in recordsToDelete {
-            if let fileUrl = record.localFileUrl {
-                try? FileManager.default.removeItem(at: fileUrl)
-            }
-        }
-        
-        DispatchQueue.main.async {
-            self.highlightRecords.remove(atOffsets: offsets)
-            self.saveHighlights()
-        }
+        // This function would need to be updated to delete records on the server
+        highlightRecords.remove(atOffsets: offsets)
+        saveHighlights()
     }
-}
-
-// MARK: - Data Models and Utility Functions
-
-struct HighlightsResponse: Codable {
-    let highlights: [HighlightInterval]
-}
-
-struct HighlightInterval: Codable {
-    let startFrame: Int
-    let endFrame: Int
-}
-
-struct ServerErrorResponse: Codable {
-    let error: String
 }
 
 // MARK: - PHPicker View Wrapper
@@ -886,13 +1183,21 @@ struct VideoPicker: UIViewControllerRepresentable {
             if itemProvider.hasItemConformingToTypeIdentifier(identifier) {
                 itemProvider.loadFileRepresentation(forTypeIdentifier: identifier) { url, error in
                     if let url = url {
-                        let documentsDirectory = FileManager.default.temporaryDirectory
-                        let newURL = documentsDirectory.appendingPathComponent(url.lastPathComponent)
+                        // --- 修复点：将文件保存到文档目录，而不是临时目录 ---
+                        let documentsDirectory = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!
+                        let newURL = documentsDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
                         
-                        try? FileManager.default.copyItem(at: url, to: newURL)
-                        
-                        DispatchQueue.main.async {
-                            self.parent.onVideoPicked(newURL)
+                        do {
+                            if FileManager.default.fileExists(atPath: newURL.path) {
+                                try FileManager.default.removeItem(at: newURL)
+                            }
+                            try FileManager.default.copyItem(at: url, to: newURL)
+                            
+                            DispatchQueue.main.async {
+                                self.parent.onVideoPicked(newURL)
+                            }
+                        } catch {
+                            print("Error copying video to Documents directory: \(error)")
                         }
                     }
                 }
