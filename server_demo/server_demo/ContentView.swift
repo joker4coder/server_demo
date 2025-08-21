@@ -13,6 +13,7 @@ import PhotosUI
 import AVFoundation
 import CoreGraphics
 import AVKit
+import UniformTypeIdentifiers
 
 // MARK: - Data Models
 
@@ -23,13 +24,13 @@ struct AnalysisRecord: Identifiable, Codable {
     let date: String
     let location: String
     let status: AnalysisStatus
-    let thumbnail: String? // Local identifier
+    let thumbnail: String? // Local path string
     let duration: Double
-    let localIdentifier: String? // Optional local identifier
+    let localFileUrl: URL? // New: Store local file URL
     
     // CodingKeys required for Codable protocol
     enum CodingKeys: String, CodingKey {
-        case id, title, date, location, status, thumbnail, duration, localIdentifier
+        case id, title, date, location, status, thumbnail, duration, localFileUrl
     }
 }
 
@@ -204,7 +205,7 @@ struct HomeView: View {
         statusMessage = "正在上传视频到服务器..."
         
         // Simulate an analysis record with "processing" status
-        let newRecord = AnalysisRecord(title: "新视频分析", date: "今天", location: "未知", status: .processing, thumbnail: nil, duration: 0, localIdentifier: nil)
+        let newRecord = AnalysisRecord(title: "新视频分析", date: "今天", location: "未知", status: .processing, thumbnail: nil, duration: 0, localFileUrl: nil)
         
         Task {
             do {
@@ -232,7 +233,7 @@ struct HomeView: View {
                 }
                 
                 // Save the video to the photo album
-                let localIdentifier = try await generateHighlightVideo(originalVideoURL: url, highlights: highlights)
+                let localFileUrl = try await generateHighlightVideo(originalVideoURL: url, highlights: highlights)
 
                 // Update the record status with the correct duration
                 let updatedRecord = AnalysisRecord(
@@ -240,9 +241,9 @@ struct HomeView: View {
                     date: Date().formatted(date: .abbreviated, time: .omitted),
                     location: "我的相册",
                     status: .completed,
-                    thumbnail: localIdentifier,
+                    thumbnail: localFileUrl.absoluteString,
                     duration: totalHighlightDuration, // Use the new duration
-                    localIdentifier: localIdentifier
+                    localFileUrl: localFileUrl
                 )
                 
                 await MainActor.run {
@@ -295,9 +296,9 @@ struct HomeView: View {
         let decodedResponse = try JSONDecoder().decode(HighlightsResponse.self, from: data)
         return decodedResponse.highlights
     }
-    // gen by ds 
-    // Generate a highlight video with a watermark based on intervals and save to the photo album
-    private func generateHighlightVideo(originalVideoURL: URL, highlights: [HighlightInterval]) async throws -> String {
+    // gen by ds
+    // Generate a highlight video with a watermark based on intervals and save to the app's document directory
+    private func generateHighlightVideo(originalVideoURL: URL, highlights: [HighlightInterval]) async throws -> URL {
         let asset = AVURLAsset(url: originalVideoURL)
         let tracks = try await asset.load(.tracks)
         let videoTrack = tracks.first(where: { $0.mediaType == .video })
@@ -404,7 +405,8 @@ struct HomeView: View {
         videoComposition.animationTool = AVVideoCompositionCoreAnimationTool(postProcessingAsVideoLayer: videoLayer, in: parentLayer)
         videoComposition.instructions = layerInstructions
         
-        let outputURL = URL(fileURLWithPath: NSTemporaryDirectory()).appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
+        // Save the video to the app's document directory
+        let outputURL = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).appendingPathExtension("mp4")
         
         guard let exportSession = AVAssetExportSession(asset: composition, presetName: AVAssetExportPresetHighestQuality) else {
             throw NSError(domain: "VideoExportError", code: 2, userInfo: [NSLocalizedDescriptionKey: "无法创建导出会话。"])
@@ -420,27 +422,7 @@ struct HomeView: View {
             throw exportSession.error ?? NSError(domain: "VideoExportError", code: 3, userInfo: [NSLocalizedDescriptionKey: "视频导出失败。"])
         }
         
-        // Save the video to the photo album and get its identifier
-        let localIdentifier = try await saveVideoToPhotoLibrary(at: outputURL)
-        
-        try? FileManager.default.removeItem(at: outputURL)
-        
-        return localIdentifier
-    }
-    
-    // Save the video to the photo album and return its local identifier
-    private func saveVideoToPhotoLibrary(at url: URL) async throws -> String {
-        var localIdentifier: String?
-        try await PHPhotoLibrary.shared().performChanges {
-            let request = PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
-            request?.creationDate = Date()
-            localIdentifier = request?.placeholderForCreatedAsset?.localIdentifier
-        }
-        
-        guard let identifier = localIdentifier else {
-            throw NSError(domain: "PhotoLibraryError", code: 4, userInfo: [NSLocalizedDescriptionKey: "无法获取视频的本地标识符。"])
-        }
-        return identifier
+        return outputURL
     }
 }
 
@@ -469,82 +451,6 @@ struct AnalysisView: View {
 }
 
 // MARK: - My Profile View
-
-import SwiftUI
-
-// 辅助视图：用于球员位置标签
-struct PlayerPositionLabel: View {
-    let title: String
-    
-    var body: some View {
-        Text(title)
-            .font(.system(size: 10, weight: .medium))
-            .foregroundColor(.white)
-            .padding(.horizontal, 6)
-            .padding(.vertical, 2)
-            .background(Color.black.opacity(0.4))
-            .cornerRadius(4)
-    }
-}
-
-// 辅助视图：用于统计数据
-struct StatView: View {
-    let number: String
-    let label: String
-    
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(number)
-                .font(.system(size: 24, weight: .bold))
-                .foregroundColor(.black)
-            Text(label)
-                .font(.system(size: 14))
-                .foregroundColor(.gray)
-        }
-    }
-}
-
-// 辅助视图：用于菜单列表行
-struct MenuListRow: View {
-    let icon: String
-    let title: String
-    var subtitle: String?
-    var showChevron: Bool = false
-    
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 16) {
-                Image(systemName: icon)
-                    .font(.title2)
-                    .frame(width: 25)
-                    .foregroundColor(.gray)
-                
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(title)
-                        .font(.system(size: 16))
-                    
-                    if let subtitle = subtitle {
-                        Text(subtitle)
-                            .font(.system(size: 12))
-                            .foregroundColor(.gray)
-                    }
-                }
-                
-                Spacer()
-                
-                if showChevron {
-                    Image(systemName: "chevron.right")
-                        .foregroundColor(.gray)
-                }
-            }
-            .padding(.vertical, 12)
-            .padding(.horizontal, 16)
-            
-            Divider()
-                .padding(.leading, 50)
-        }
-    }
-}
 
 struct MyProfileView: View {
     var body: some View {
@@ -651,8 +557,8 @@ struct AnalysisRecordRowView: View {
     var body: some View {
         // If the record is completed and has a local identifier, make it navigable
         Group {
-            if let localId = record.localIdentifier, record.status == .completed {
-                NavigationLink(destination: VideoPlayerContainerView(localIdentifier: localId)) {
+            if let localUrl = record.localFileUrl, record.status == .completed {
+                NavigationLink(destination: VideoPlayerContainerView(localFileUrl: localUrl)) {
                     contentView
                 }
                 .buttonStyle(PlainButtonStyle()) // Remove the default blue link style
@@ -661,13 +567,8 @@ struct AnalysisRecordRowView: View {
             }
         }
         .onAppear {
-            if let localId = record.localIdentifier {
-                let assets = PHAsset.fetchAssets(withLocalIdentifiers: [localId], options: nil)
-                if let asset = assets.firstObject {
-                    PHImageManager.default().requestImage(for: asset, targetSize: CGSize(width: 200, height: 200), contentMode: .aspectFill, options: nil) { result, _ in
-                        self.thumbnailImage = result
-                    }
-                }
+            if let localFileUrl = record.localFileUrl {
+                generateThumbnail(for: localFileUrl)
             } else {
                 // If there's no local identifier (e.g., a processing record), use a placeholder
                 self.thumbnailImage = UIImage(systemName: "photo.fill")?.withTintColor(.gray, renderingMode: .alwaysOriginal)
@@ -748,17 +649,33 @@ struct AnalysisRecordRowView: View {
         .cornerRadius(10)
         .shadow(color: .gray.opacity(0.2), radius: 5, x: 0, y: 2)
     }
+
+    private func generateThumbnail(for videoURL: URL) {
+        let asset = AVAsset(url: videoURL)
+        let generator = AVAssetImageGenerator(asset: asset)
+        generator.appliesPreferredTrackTransform = true
+        
+        Task {
+            do {
+                let thumbnailCGImage = try await generator.image(at: .zero).image
+                await MainActor.run {
+                    self.thumbnailImage = UIImage(cgImage: thumbnailCGImage)
+                }
+            } catch {
+                print("Error generating thumbnail: \(error.localizedDescription)")
+            }
+        }
+    }
 }
 
 // MARK: - Video Player View
 
-import AVFoundation // 确保已导入
-
 struct VideoPlayerView: View {
-    let asset: PHAsset
+    let localFileUrl: URL
     @State private var player: AVPlayer?
     @State private var hasAudio = false
     @State private var isMuted = false
+    @State private var isShowingSaveAlert = false
     
     var body: some View {
         VStack {
@@ -768,6 +685,10 @@ struct VideoPlayerView: View {
                         // 修复1: 配置音频会话
                         configureAudioSession()
                         player.play()
+                    }
+                    .onLongPressGesture {
+                        // 长按时显示保存视频的对话框
+                        isShowingSaveAlert = true
                     }
             } else {
                 ProgressView("加载视频中...")
@@ -792,31 +713,28 @@ struct VideoPlayerView: View {
             player?.pause()
         }
         .navigationTitle("播放视频")
+        .alert("保存视频", isPresented: $isShowingSaveAlert) {
+            Button("保存到相册", role: .destructive) {
+                saveVideoToPhotoLibrary(at: localFileUrl)
+            }
+            Button("取消", role: .cancel) { }
+        } message: {
+            Text("您确定要将此视频保存到您的相册吗？")
+        }
     }
     
     private func loadVideoAsset() {
-        let options = PHVideoRequestOptions()
-        options.deliveryMode = .highQualityFormat
-        options.isNetworkAccessAllowed = true // 允许从iCloud加载
-        
-        PHImageManager.default().requestAVAsset(forVideo: asset, options: options) { avAsset, _, _ in
-            guard let avAsset = avAsset else { return }
-            
-            // 检查音频轨道
-            let audioTracks = avAsset.tracks(withMediaType: .audio)
-            DispatchQueue.main.async {
-                self.hasAudio = !audioTracks.isEmpty
-                self.player = AVPlayer(playerItem: AVPlayerItem(asset: avAsset))
-                
-                // 修复2: 确保非静音模式
-                self.player?.isMuted = false
-            }
+        let asset = AVAsset(url: localFileUrl)
+        let audioTracks = asset.tracks(withMediaType: .audio)
+        DispatchQueue.main.async {
+            self.hasAudio = !audioTracks.isEmpty
+            self.player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+            self.player?.isMuted = false
         }
     }
     
     private func configureAudioSession() {
         do {
-            // 修复3: 设置音频会话类别
             try AVAudioSession.sharedInstance().setCategory(
                 .playback,
                 mode: .moviePlayback,
@@ -833,27 +751,35 @@ struct VideoPlayerView: View {
         player.isMuted.toggle()
         isMuted = player.isMuted
     }
+    
+    // Save the video to the photo album
+    private func saveVideoToPhotoLibrary(at url: URL) {
+        PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+            guard status == .authorized else {
+                print("未授权访问相册。")
+                return
+            }
+            
+            PHPhotoLibrary.shared().performChanges {
+                PHAssetChangeRequest.creationRequestForAssetFromVideo(atFileURL: url)
+            } completionHandler: { success, error in
+                if success {
+                    print("视频已成功保存到相册。")
+                } else {
+                    print("保存视频到相册失败: \(error?.localizedDescription ?? "")")
+                }
+            }
+        }
+    }
 }
+
 // MARK: - Video Player Container View (for asynchronous video loading)
 
 struct VideoPlayerContainerView: View {
-    let localIdentifier: String
-    @State private var asset: PHAsset?
+    let localFileUrl: URL
     
     var body: some View {
-        if let asset = asset {
-            VideoPlayerView(asset: asset)
-        } else {
-            ProgressView("正在加载视频...")
-                .navigationTitle("加载中...")
-                .onAppear {
-                    // When the view appears, get the PHAsset from the local identifier
-                    let assets = PHAsset.fetchAssets(withLocalIdentifiers: [localIdentifier], options: nil)
-                    if let fetchedAsset = assets.firstObject {
-                        self.asset = fetchedAsset
-                    }
-                }
-        }
+        VideoPlayerView(localFileUrl: localFileUrl)
     }
 }
 
@@ -892,20 +818,17 @@ class HighlightsViewModel: ObservableObject {
     
     func deleteAssets(at offsets: IndexSet) {
         let recordsToDelete = offsets.map { highlightRecords[$0] }
-        let assetIDsToDelete = recordsToDelete.compactMap { $0.localIdentifier }
         
-        PHPhotoLibrary.shared().performChanges({
-            let assets = PHAsset.fetchAssets(withLocalIdentifiers: assetIDsToDelete, options: nil)
-            PHAssetChangeRequest.deleteAssets(assets)
-        }) { success, error in
-            if success {
-                DispatchQueue.main.async {
-                    self.highlightRecords.remove(atOffsets: offsets)
-                    self.saveHighlights()
-                }
-            } else {
-                print("Error deleting assets: \(error?.localizedDescription ?? "")")
+        // Delete local files
+        for record in recordsToDelete {
+            if let fileUrl = record.localFileUrl {
+                try? FileManager.default.removeItem(at: fileUrl)
             }
+        }
+        
+        DispatchQueue.main.async {
+            self.highlightRecords.remove(atOffsets: offsets)
+            self.saveHighlights()
         }
     }
 }
@@ -974,6 +897,80 @@ struct VideoPicker: UIViewControllerRepresentable {
                     }
                 }
             }
+        }
+    }
+}
+
+// 辅助视图：用于球员位置标签
+struct PlayerPositionLabel: View {
+    let title: String
+    
+    var body: some View {
+        Text(title)
+            .font(.system(size: 10, weight: .medium))
+            .foregroundColor(.white)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(Color.black.opacity(0.4))
+            .cornerRadius(4)
+    }
+}
+
+// 辅助视图：用于统计数据
+struct StatView: View {
+    let number: String
+    let label: String
+    
+    var body: some View {
+        VStack(spacing: 4) {
+            Text(number)
+                .font(.system(size: 24, weight: .bold))
+                .foregroundColor(.black)
+            Text(label)
+                .font(.system(size: 14))
+                .foregroundColor(.gray)
+        }
+    }
+}
+
+// 辅助视图：用于菜单列表行
+struct MenuListRow: View {
+    let icon: String
+    let title: String
+    var subtitle: String?
+    var showChevron: Bool = false
+    
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 16) {
+                Image(systemName: icon)
+                    .font(.title2)
+                    .frame(width: 25)
+                    .foregroundColor(.gray)
+                
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.system(size: 16))
+                    
+                    if let subtitle = subtitle {
+                        Text(subtitle)
+                            .font(.system(size: 12))
+                            .foregroundColor(.gray)
+                    }
+                }
+                
+                Spacer()
+                
+                if showChevron {
+                    Image(systemName: "chevron.right")
+                        .foregroundColor(.gray)
+                }
+            }
+            .padding(.vertical, 12)
+            .padding(.horizontal, 16)
+            
+            Divider()
+                .padding(.leading, 50)
         }
     }
 }
